@@ -1,0 +1,24 @@
+WooQuick ADD Pro - License Agreement
+
+1. GRANT OF LICENSE
+   One license key is valid for one (1) domain/site.
+   Unlimited updates and support for 1 year included.
+
+2. RESTRICTIONS
+   - Redistribution of the plugin is prohibited
+   - One license per production site
+   - Development/staging sites allowed (no additional cost)
+
+3. SUPPORT
+   - Support via email within 24h (Mon-Fri)
+   - Priority support for license holders
+   - No refunds after 30 days of purchase
+
+4. UPDATES
+   - Free updates for 1 year
+   - Renewal: 50% of original price
+
+5. WARRANTY
+   This plugin is provided "as is". No warranty of any kind.
+
+© 2024 UAServer. All rights reserved.
