@@ -1,0 +1,22 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Create ZIP archive
+        run: |
+          zip -r woo-quick-add-pro.zip . -x "*.git*" ".github/*"
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: woo-quick-add-pro.zip
+          generate_release_notes: true
