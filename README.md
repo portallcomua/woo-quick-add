@@ -1,81 +1,56 @@
 === Woo Quick ADD ===
-Contributors: UAServer
-Tags: woocommerce, voice, products, qr-code, import, export
+Contributors: uaserver
+Tags: woocommerce, voice, quick add, product, speech
 Requires at least: 5.8
-Tested up to: 6.8
-Stable tag: 1.0.0
+Tested up to: 6.5
+Stable tag: 2.0.1
 Requires PHP: 7.4
 License: GPLv2 or later
-WC requires at least: 5.0
-WC tested up to: 8.0
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Add products to WooCommerce by voice, QR code, or photo. Save hours of manual work daily.
+Швидке додавання товарів у WooCommerce голосом та фото.
 
 == Description ==
 
-= 🎤 Voice Product Adding =
-Just say "name t-shirt price 25 description cool product" - the product is instantly in your store!
+Woo Quick ADD дозволяє додавати товари в WooCommerce за допомогою голосу та камери.
 
-= 📷 QR Code Scanning =
-Scan any QR code with product data - all fields auto-fill in seconds.
+**Безкоштовні можливості:**
+* Голосове диктування (назва, ціна, бренд, категорія, мітки).
+* Додавання фото з камери.
+* Автоматичне створення категорій та міток.
+* Експорт у CSV (сумісний з імпортом WooCommerce).
+* Вивід форми на фронтенді (шорткод `[wqa_frontend]`).
 
-= 📸 Photo Gallery =
-Take photos directly in the plugin. Main photo + gallery support.
+**Розширені можливості (PRO):**
+* Додавання атрибутів (колір, розмір тощо).
+* Створення варіативних товарів.
+* Видалення фону на фото (інтеграція з Remove.bg).
+* Підтримка типів товарів (Віртуальний, Завантажуваний).
+* Пріоритетна підтримка.
 
-= 🌍 Bilingual =
-Full support for Ukrainian and English. Auto-detects site language.
+== Upgrade Notice ==
 
-= 📤 CSV Export =
-Export all products with all fields (photos, attributes, categories).
+= 2.0.1 =
+Потрібні атрибути, варіативні товари та видалення фону? Дізнайтеся про PRO-версію на https://uaserver.pp.ua/woo-quick-add/
 
 == Installation ==
 
-1. Upload the plugin to `/wp-content/plugins/`
-2. Activate through 'Plugins' menu in WordPress
-3. Go to 'Woo Quick ADD' menu
-4. Click microphone and say product details
+1. Завантажте плагін у папку `/wp-content/plugins/`.
+2. Активуйте через меню 'Плагіни' у WordPress.
+3. Перейдіть у меню 'Woo Quick ADD' для налаштування.
 
 == Frequently Asked Questions ==
 
-= Is there a free version? =
-Yes! 25 products for free to test all features.
-
-= How to get PRO license? =
-Buy on our website: https://uaserver.pp.ua/woo-quick-add/
-
-= What's the price? =
-599 UAH / $29 USD - one-time payment, lifetime license.
-
-= How does voice work? =
-Enable microphone, say "name product-name price 25". The plugin recognizes Ukrainian and English.
-
-= Does it support QR codes? =
-Yes! Point your camera at any QR code containing product data.
-
-= Can I export products? =
-Yes! Full CSV export with all fields including photos.
-
-== Screenshots ==
-
-1. Main interface with voice button
-2. QR code scanning
-3. Product gallery
-4. License activation
-5. CSV export
+= Як додати форму на сторінку? =
+Використовуйте шорткод `[wqa_frontend]` на будь-якій сторінці.
 
 == Changelog ==
 
-= 1.0.0 =
-* Initial release
-* Voice product adding (UA/EN)
-* QR code scanner
-* Photo gallery
-* CSV export
-* Bilingual interface
-* PayPal & Card payments
+= 2.0.1 =
+* Додано посилання "Налаштування" в списку плагінів.
+* Оновлено readme.txt (згадка про PRO).
+* Виправлено можливі проблеми з оновленням.
 
-== External Services ==
-
-This plugin uses:
-- api.qrserver.com - free QR code decoding service
-- PayPal.com - for PRO payments (optional, only when user buys license)
+= 2.0.0 =
+* Перший реліз для WordPress.org (без обмежень).
+* Базовий функціонал: голос, фото, CSV.
