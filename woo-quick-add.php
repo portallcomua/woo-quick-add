@@ -3,7 +3,7 @@
  * Plugin Name: Woo Quick ADD
  * Plugin URI:  https://uaserver.pp.ua/woo-quick-add/
  * Description: Голосове додавання товарів у WooCommerce. Голос, фото, атрибути, мітки, варіативні, CSV.
- * Version:     1.7.0
+ * Version:     1.8.0
  * Author:      UAServer
  * Author URI:  https://uaserver.pp.ua/
  * License:     GPL v2 or later
@@ -16,12 +16,12 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('WQA_VERSION',    '1.7.0');
-define('WQA_FREE_LIMIT', 25); // зашито в коді — не змінюється з налаштувань
+define('WQA_VERSION',    '1.8.0');
+define('WQA_FREE_LIMIT', 25);
 define('WQA_FILE',       __FILE__);
 define('WQA_GITHUB',     'portallcomua/woo-quick-add');
 
-// WooCommerce HPOS сумісність
+// WooCommerce HPOS
 add_action('before_woocommerce_init', function () {
     if (class_exists(\Automattic\WooCommerce\Utilities\FeaturesUtil::class)) {
         \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', WQA_FILE, true);
@@ -30,7 +30,7 @@ add_action('before_woocommerce_init', function () {
 });
 
 // =====================================================================
-// АВТООНОВЛЕННЯ З GITHUB
+// АВТООНОВЛЕННЯ
 // =====================================================================
 class WQA_Updater {
     private $file, $slug, $repo;
@@ -91,27 +91,53 @@ function wqa_sysinfo()  {
 }
 
 // =====================================================================
-// ІНТЕГРАЦІЯ З ПЛАГІНОМ МОНЕТИЗАЦІЇ
+// МОНЕТИЗАЦІЯ ТА ДОСТУП
 // =====================================================================
 function wqa_pro() {
-    // Якщо ваш плагін монетизації активний — використовуємо його перевірку.
-    // ID продукту для Woo Quick ADD = 3 (як у вашому прикладі).
     if ( function_exists( 'wcc_check_user_premium' ) ) {
         return (bool) wcc_check_user_premium( get_current_user_id(), 3 );
     }
-    // Інакше — PRO не активовано.
     return false;
 }
 
-// URL сторінки оплати (Приват-конверт). Можна змінити в Налаштуваннях.
 function wqa_pro_url() {
     $url = get_option('wqa_pro_url', '');
     return $url ? $url : 'https://uaserver.pp.ua/woo-quick-add/';
 }
 
+function wqa_user_can_use() {
+    if ( ! is_user_logged_in() ) return false;
+    $user = wp_get_current_user();
+    if ( in_array( 'administrator', (array) $user->roles ) ) return true;
+    
+    $allowed = get_option('wqa_allowed_roles', ['administrator']);
+    foreach ( $user->roles as $role ) {
+        if ( in_array( $role, (array) $allowed ) ) return true;
+    }
+    return false;
+}
+
+// =====================================================================
+// АКТИВАЦІЯ
+// =====================================================================
 register_activation_hook(__FILE__, function () {
     add_option('wqa_ops', 0);
     add_option('wqa_pro_url', '');
+    add_option('wqa_rbg_api', '');
+    add_option('wqa_draft', '1'); // За замовчуванням чернетка
+    add_option('wqa_allowed_roles', ['administrator']);
+    add_option('wqa_instructions', ''); // Порожньо = стандартна інструкція
+    
+    // Створюємо роль "Менеджер магазину", якщо її немає
+    if ( ! get_role( 'shop_manager_custom' ) ) {
+        add_role( 'shop_manager_custom', 'Менеджер магазину', [
+            'read' => true,
+            'edit_products' => true,
+            'publish_products' => true,
+            'edit_published_products' => true,
+            'upload_files' => true,
+        ]);
+    }
 });
 
 // =====================================================================
@@ -123,44 +149,69 @@ add_action('admin_menu', function () {
 });
 
 // =====================================================================
-// НАЛАШТУВАННЯ (тільки Remove.bg + URL оплати)
+// ШОРТКОД ДЛЯ ФРОНТЕНДУ
+// =====================================================================
+add_shortcode('wqa_frontend', function () {
+    if ( ! wqa_user_can_use() ) return '<p>' . wqa_t('Доступ заборонено.', 'Access denied.') . '</p>';
+    ob_start();
+    wqa_render_form();
+    return ob_get_clean();
+});
+
+// =====================================================================
+// НАЛАШТУВАННЯ
 // =====================================================================
 function wqa_page_settings() {
     if (isset($_POST['wqa_save']) && check_admin_referer('wqa_cfg')) {
         update_option('wqa_rbg_api', sanitize_text_field($_POST['rbg_api']));
         update_option('wqa_pro_url', esc_url_raw($_POST['pro_url']));
+        update_option('wqa_draft', isset($_POST['wqa_draft']) ? '1' : '0');
+        update_option('wqa_allowed_roles', (array) $_POST['wqa_roles'] ?? []);
+        update_option('wqa_instructions', wp_kses_post($_POST['wqa_instructions']));
         echo '<div class="notice notice-success"><p>✅ '.wqa_t('Збережено!', 'Saved!').'</p></div>';
     }
     $rbg_key = get_option('wqa_rbg_api', '');
     $pro_url = get_option('wqa_pro_url', '');
+    $draft = get_option('wqa_draft', '1');
+    $roles = get_option('wqa_allowed_roles', ['administrator']);
+    $instr = get_option('wqa_instructions', '');
     ?>
     <div class="wrap">
     <h1>⚙️ <?php echo wqa_t('Налаштування Woo Quick ADD', 'Woo Quick ADD Settings') ?></h1>
     <form method="post"><?php wp_nonce_field('wqa_cfg') ?>
 
     <h2>🖼️ Remove.bg</h2>
-    <div style="background:#f0f8ff;padding:12px 16px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.9">
-        <b><?php echo wqa_t('Як отримати ключ (50 фото/міс безкоштовно):', 'Get key (50 photos/month free):') ?></b><br>
-        1. <?php echo wqa_t('Зареєструйтесь на', 'Register at') ?> <a href="https://www.remove.bg/api" target="_blank"><b>remove.bg/api</b></a><br>
-        2. <?php echo wqa_t('API Keys → New API Key → скопіюй', 'API Keys → New API Key → copy') ?><br>
-        3. <?php echo wqa_t('Вставте нижче та збережіть → вибір фону з\'явиться на головній', 'Paste below and save → background selector appears on main page') ?>
-    </div>
     <table class="form-table">
         <tr><th>Remove.bg API Key</th>
             <td><input type="text" name="rbg_api" value="<?php echo esc_attr($rbg_key) ?>" style="width:340px" placeholder="tSZ2c5cR...">
-            <?php if ($rbg_key): ?>
-                <span style="color:#198754;margin-left:8px">✅ <?php echo wqa_t('Активно', 'Active') ?></span>
-            <?php else: ?>
-                <span style="color:#888;margin-left:8px"><?php echo wqa_t('Не введено', 'Not set') ?></span>
-            <?php endif ?>
-            </td></tr>
+            <p class="description"><?php echo wqa_t('Отримайте ключ на remove.bg/api (50 фото/міс безкоштовно).', 'Get key at remove.bg/api (50 photos/month free).') ?></p></td></tr>
     </table>
 
-    <h2>💳 <?php echo wqa_t('Оплата PRO (Приват-конверт)', 'PRO payment (Privat24)') ?></h2>
+    <h2>💳 <?php echo wqa_t('Оплата PRO', 'PRO payment') ?></h2>
     <table class="form-table">
         <tr><th><?php echo wqa_t('URL сторінки оплати', 'Payment page URL') ?></th>
             <td><input type="url" name="pro_url" value="<?php echo esc_attr($pro_url) ?>" style="width:420px" placeholder="https://send.monobank.ua/...">
-            <p class="description"><?php echo wqa_t('Кнопка «Перейти на PRO» веде сюди. Після оплати PRO активується у вашому плагіні монетизації.', 'The "Go PRO" button leads here. After payment, PRO is activated in your monetization plugin.') ?></p></td></tr>
+            <p class="description"><?php echo wqa_t('Кнопка «Перейти на PRO» веде сюди.', 'The "Go PRO" button leads here.') ?></p></td></tr>
+    </table>
+
+    <h2>⚙️ <?php echo wqa_t('Загальні', 'General') ?></h2>
+    <table class="form-table">
+        <tr><th><?php echo wqa_t('Статус за замовчуванням', 'Default status') ?></th>
+            <td><label><input type="checkbox" name="wqa_draft" value="1" <?php checked($draft, '1') ?>> <?php echo wqa_t('Зберігати як чернетку', 'Save as draft') ?></label>
+            <p class="description"><?php echo wqa_t('Якщо зняти — товар одразу публікується.', 'If unchecked — product is published immediately.') ?></p></td></tr>
+        <tr><th><?php echo wqa_t('Доступ до фронтенду', 'Frontend access') ?></th>
+            <td>
+                <?php foreach (get_editable_roles() as $role_name => $role_info) : ?>
+                    <label style="display:block;margin-bottom:4px">
+                        <input type="checkbox" name="wqa_roles[]" value="<?php echo esc_attr($role_name) ?>" <?php checked(in_array($role_name, (array)$roles)) ?>>
+                        <?php echo esc_html($role_info['name']) ?>
+                    </label>
+                <?php endforeach ?>
+                <p class="description"><?php echo wqa_t('Хто може бачити форму на фронтенді (шорткод [wqa_frontend]).', 'Who can see the form on frontend (shortcode [wqa_frontend]).') ?></p>
+            </td></tr>
+        <tr><th><?php echo wqa_t('Текст інструкції', 'Instruction text') ?></th>
+            <td><textarea name="wqa_instructions" rows="5" style="width:100%"><?php echo esc_textarea($instr) ?></textarea>
+            <p class="description"><?php echo wqa_t('Якщо порожньо — показується стандартна інструкція. Можна вставити шорткод.', 'If empty — default instruction is shown. You can paste a shortcode.') ?></p></td></tr>
     </table>
 
     <input type="hidden" name="wqa_save" value="1">
@@ -171,13 +222,21 @@ function wqa_page_settings() {
 }
 
 // =====================================================================
-// ГОЛОВНА СТОРІНКА
+// РЕНДЕР ФОРМИ (для адмінки та фронтенду)
 // =====================================================================
 function wqa_page_main() {
+    if ( ! wqa_user_can_use() ) {
+        wp_die( wqa_t('Доступ заборонено.', 'Access denied.') );
+    }
+    wqa_render_form();
+}
+
+function wqa_render_form() {
     $en      = wqa_en();
     $pro     = wqa_pro();
     $has_rbg = !empty(get_option('wqa_rbg_api', ''));
     $can     = wqa_can();
+    $draft   = get_option('wqa_draft', '1') === '1';
 
     $fields = $en
         ? ['NAME','BRAND','PRICE','SALE','SKU','WEIGHT','CATEGORY','TAGS','DESCRIPTION']
@@ -186,235 +245,173 @@ function wqa_page_main() {
     $template = implode("\n", array_map(fn($f) => $f.': ', $fields));
 
     $vm = $en ? [
-        'name'        => ['field' => 'NAME',        'type' => 'simple'],
-        'brand'       => ['field' => 'BRAND',       'type' => 'simple'],
-        'price'       => ['field' => 'PRICE',       'type' => 'simple'],
-        'sale'        => ['field' => 'SALE',         'type' => 'simple'],
-        'discount'    => ['field' => 'SALE',         'type' => 'simple'],
-        'sku'         => ['field' => 'SKU',          'type' => 'simple'],
-        'weight'      => ['field' => 'WEIGHT',       'type' => 'simple'],
-        'category'    => ['field' => 'CATEGORY',     'type' => 'simple'],
-        'description' => ['field' => 'DESCRIPTION',  'type' => 'simple'],
-        'desc'        => ['field' => 'DESCRIPTION',  'type' => 'simple'],
-        'tag'         => ['field' => 'TAGS',         'type' => 'append'],
-        'tags'        => ['field' => 'TAGS',         'type' => 'append'],
-        'attribute'   => ['field' => null,            'type' => 'attr'],
-        'attr'        => ['field' => null,            'type' => 'attr'],
-        'variation'   => ['field' => null,            'type' => 'variation'],
+        'name' => ['field' => 'NAME', 'type' => 'simple'],
+        'brand' => ['field' => 'BRAND', 'type' => 'simple'],
+        'price' => ['field' => 'PRICE', 'type' => 'simple'],
+        'sale' => ['field' => 'SALE', 'type' => 'simple'],
+        'sku' => ['field' => 'SKU', 'type' => 'simple'],
+        'weight' => ['field' => 'WEIGHT', 'type' => 'simple'],
+        'category' => ['field' => 'CATEGORY', 'type' => 'simple'],
+        'description' => ['field' => 'DESCRIPTION', 'type' => 'simple'],
+        'tag' => ['field' => 'TAGS', 'type' => 'append'],
+        'tags' => ['field' => 'TAGS', 'type' => 'append'],
+        'attribute' => ['field' => null, 'type' => 'attr'],
+        'variation' => ['field' => null, 'type' => 'variation'],
     ] : [
-        'назва'       => ['field' => 'НАЗВА',        'type' => 'simple'],
-        'найменування'=> ['field' => 'НАЗВА',        'type' => 'simple'],
-        'бренд'       => ['field' => 'БРЕНД',        'type' => 'simple'],
-        'марка'       => ['field' => 'БРЕНД',        'type' => 'simple'],
-        'ціна'        => ['field' => 'ЦІНА',         'type' => 'simple'],
-        'вартість'    => ['field' => 'ЦІНА',         'type' => 'simple'],
-        'акція'       => ['field' => 'АКЦІЯ',        'type' => 'simple'],
-        'знижка'      => ['field' => 'АКЦІЯ',        'type' => 'simple'],
-        'артикул'     => ['field' => 'АРТИКУЛ',      'type' => 'simple'],
-        'вага'        => ['field' => 'ВАГА',         'type' => 'simple'],
-        'категорія'   => ['field' => 'КАТЕГОРІЯ',    'type' => 'simple'],
-        'опис'        => ['field' => 'ОПИС',         'type' => 'simple'],
-        'описую'      => ['field' => 'ОПИС',         'type' => 'simple'],
-        'мітка'       => ['field' => 'МІТКИ',        'type' => 'append'],
-        'мітки'       => ['field' => 'МІТКИ',        'type' => 'append'],
-        'тег'         => ['field' => 'МІТКИ',        'type' => 'append'],
-        'теги'        => ['field' => 'МІТКИ',        'type' => 'append'],
-        'атрибут'     => ['field' => null,            'type' => 'attr'],
-        'варіація'    => ['field' => null,            'type' => 'variation'],
+        'назва' => ['field' => 'НАЗВА', 'type' => 'simple'],
+        'бренд' => ['field' => 'БРЕНД', 'type' => 'simple'],
+        'ціна' => ['field' => 'ЦІНА', 'type' => 'simple'],
+        'акція' => ['field' => 'АКЦІЯ', 'type' => 'simple'],
+        'артикул' => ['field' => 'АРТИКУЛ', 'type' => 'simple'],
+        'вага' => ['field' => 'ВАГА', 'type' => 'simple'],
+        'категорія' => ['field' => 'КАТЕГОРІЯ', 'type' => 'simple'],
+        'опис' => ['field' => 'ОПИС', 'type' => 'simple'],
+        'мітка' => ['field' => 'МІТКИ', 'type' => 'append'],
+        'мітки' => ['field' => 'МІТКИ', 'type' => 'append'],
+        'атрибут' => ['field' => null, 'type' => 'attr'],
+        'варіація' => ['field' => null, 'type' => 'variation'],
     ];
 
     $js_config = [
-        'EN'      => $en,
-        'PRO'     => $pro,
-        'HAS_RBG' => $has_rbg,
-        'CAN'     => $can,
-        'AJAX'    => admin_url('admin-ajax.php'),
-        'NS'      => wp_create_nonce('wqa_save'),
-        'NE'      => wp_create_nonce('wqa_export'),
-        'TPL'     => $template,
-        'VM'      => $vm,
-        'L'       => [
-            'photo'        => wqa_t('✅ Фото ', '✅ Photo '),
-            'cam_err'      => wqa_t('❌ Помилка камери: ', '❌ Camera error: '),
-            'cam_on'       => wqa_t('Спочатку увімкніть камеру', 'Enable camera first'),
-            'clr'          => wqa_t('Фото очищено', 'Photos cleared'),
-            'saving'       => wqa_t('⏳ ЗБЕРІГАЮ…', '⏳ SAVING…'),
-            'saved'        => wqa_t('✅ Опубліковано! ID: ', '✅ Published! ID: '),
-            'add_next'     => wqa_t('➕ ДОДАТИ ЩЕ', '➕ ADD NEXT'),
-            'publish'      => wqa_t('➕ ОПУБЛІКУВАТИ', '➕ PUBLISH'),
-            'conn_err'     => wqa_t('❌ Помилка з\'єднання', '❌ Connection error'),
-            'limit'        => wqa_t('❌ Ліміт вичерпано! Купіть ліцензію', '❌ Limit reached! Buy license'),
-            'stop'         => wqa_t('🛑 ЗУПИНИТИ', '🛑 STOP'),
-            'dictate'      => wqa_t('🎤 ДИКТУВАТИ', '🎤 VOICE INPUT'),
-            'mic_ready'    => wqa_t('🎤 Маяк: назва, ціна, бренд, атрибут…', '🎤 Beacon: name, price, brand, attribute…'),
-            'mic_blocked'  => wqa_t('❌ Мікрофон заблоковано! Тапніть 🔒 в адресному рядку → Дозволи → Мікрофон → Дозволити', '❌ Mic blocked! Tap 🔒 → Permissions → Microphone → Allow'),
-            'mic_err'      => wqa_t('❌ Голос: ', '❌ Voice: '),
-            'val_prompt'   => wqa_t(' → значення…', ' → value…'),
-            'tag_prompt'   => wqa_t('⏳ Мітки → говоріть…', '⏳ Tags → say…'),
-            'attr_name'    => wqa_t('⏳ Назва атрибуту…', '⏳ Attribute name…'),
-            'attr_val'     => wqa_t('⏳ Значення атрибуту…', '⏳ Attribute values…'),
-            'var_name'     => wqa_t('⏳ Назва варіації…', '⏳ Variation name…'),
-            'hint'         => wqa_t('💡 назва / ціна / бренд / атрибут колір значення червоний…', '💡 name / price / brand / attribute color value red…'),
-            'bg_proc'      => wqa_t('⏳ Фото ', '⏳ Photo '),
-            'bg_of'        => wqa_t('/', '/'),
-            'bg_done'      => wqa_t('✅ Готово!', '✅ Done!'),
+        'EN' => $en, 'PRO' => $pro, 'HAS_RBG' => $has_rbg, 'CAN' => $can, 'DRAFT' => $draft,
+        'AJAX' => admin_url('admin-ajax.php'),
+        'NS' => wp_create_nonce('wqa_save'),
+        'NE' => wp_create_nonce('wqa_export'),
+        'TPL' => $template, 'VM' => $vm,
+        'L' => [
+            'photo' => wqa_t('✅ Фото ', '✅ Photo '),
+            'saving' => wqa_t('⏳ ЗБЕРІГАЮ…', '⏳ SAVING…'),
+            'saved' => wqa_t('✅ Збережено! ID: ', '✅ Saved! ID: '),
+            'publish' => wqa_t('➕ ОПУБЛІКУВАТИ', '➕ PUBLISH'),
+            'draft' => wqa_t('➕ ЗБЕРЕГТИ ЯК ЧЕРНЕТКУ', '➕ SAVE AS DRAFT'),
+            'limit' => wqa_t('❌ Ліміт вичерпано!', '❌ Limit reached!'),
+            'stop' => wqa_t('🛑 ЗУПИНИТИ', '🛑 STOP'),
+            'dictate' => wqa_t('🎤 ДИКТУВАТИ', '🎤 VOICE INPUT'),
+            'mic_ready' => wqa_t('🎤 Маяк: назва, ціна, бренд…', '🎤 Beacon: name, price, brand…'),
+            'mic_blocked' => wqa_t('❌ Мікрофон заблоковано!', '❌ Mic blocked!'),
+            'val_prompt' => wqa_t(' → значення…', ' → value…'),
+            'tag_prompt' => wqa_t('⏳ Мітки → говоріть…', '⏳ Tags → say…'),
+            'attr_name' => wqa_t('⏳ Назва атрибуту…', '⏳ Attribute name…'),
+            'attr_val' => wqa_t('⏳ Значення атрибуту…', '⏳ Attribute values…'),
+            'var_name' => wqa_t('⏳ Назва варіації…', '⏳ Variation name…'),
+            'hint' => wqa_t('💡 назва / ціна / бренд / атрибут колір значення червоний…', '💡 name / price / brand / attribute color value red…'),
             'attr_ph_name' => wqa_t('Назва (Колір)', 'Attribute (Color)'),
-            'attr_ph_val'  => wqa_t('Через кому (Червоний, Синій)', 'Comma sep. (Red, Blue)'),
-            'var_ph_name'  => wqa_t('Назва варіації (Колір)', 'Variation name (Color)'),
-            'var_ph_val'   => wqa_t('Значення (Червоний)', 'Value (Red)'),
-            'var_ph_price' => wqa_t('Ціна (необов.)', 'Price (opt.)'),
-            'var_add_val'  => wqa_t('+ Значення', '+ Value'),
-            'add_var'      => wqa_t('+ Варіацію', '+ Variation'),
-            'not_supported'=> wqa_t('❌ НЕ ПІДТРИМУЄТЬСЯ', '❌ NOT SUPPORTED'),
+            'attr_ph_val' => wqa_t('Через кому (Червоний, Синій)', 'Comma sep. (Red, Blue)'),
+            'var_ph_name' => wqa_t('Назва варіації (Розмір)', 'Variation name (Size)'),
+            'var_ph_val' => wqa_t('Значення (S)', 'Value (S)'),
+            'var_ph_price' => wqa_t('Ціна', 'Price'),
+            'var_add_val' => wqa_t('+ Значення', '+ Value'),
+            'not_supported' => wqa_t('❌ НЕ ПІДТРИМУЄТЬСЯ', '❌ NOT SUPPORTED'),
         ],
     ];
     ?>
     <style>
     @keyframes wqa_pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
     #wqa_w * { box-sizing:border-box }
+    .wqa-frontend-wrap { max-width:800px; margin:20px auto; padding:20px; background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.1); }
     </style>
 
-    <div id="wqa_w" style="max-width:800px;margin:auto;padding:20px 14px">
-
-    <!-- ШАПКА -->
+    <div id="wqa_w" class="<?php echo is_admin() ? '' : 'wqa-frontend-wrap' ?>">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
         <h1 style="margin:0">🎤 Woo Quick ADD <sup style="font-size:11px;color:#aaa;font-weight:400">v<?php echo WQA_VERSION ?></sup></h1>
+        <?php if (is_admin()) : ?>
         <div style="display:flex;gap:5px;flex-wrap:wrap">
             <a href="<?php echo admin_url('admin.php?page=wqa_settings') ?>" class="button">⚙️</a>
-            <a href="https://uaserver.pp.ua/woo-quick-add/" target="_blank" class="button">📖</a>
             <button id="btn_export" style="background:#0d6efd;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer">📤 CSV</button>
         </div>
-    </div>
-
-    <!-- БЕЙДЖ -->
-    <div style="background:<?php echo $pro ? '#d1e7dd' : '#fff3cd' ?>;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:14px">
-        <?php if ($pro) : ?>
-            ✅ PRO <?php echo wqa_t('— безлімітно', '— unlimited') ?>
-        <?php else : ?>
-            📊 <?php echo wqa_t('Залишилось:', 'Left:') ?> <strong><?php echo wqa_left() ?></strong>/<?php echo wqa_limit() ?>
-            &nbsp; <a href="<?php echo esc_url( wqa_pro_url() ) ?>" target="_blank" style="color:#c00;font-weight:bold">💰 <?php echo wqa_t('Перейти на PRO (499 грн)', 'Go PRO (499 UAH)') ?> →</a>
         <?php endif ?>
     </div>
 
-    <!-- КАМЕРА -->
-    <video id="wqa_cam" autoplay playsinline muted style="width:100%;background:#111;border-radius:10px;margin-bottom:6px;max-height:280px;object-fit:cover"></video>
-    <div id="wqa_gal" style="display:flex;gap:4px;flex-wrap:wrap;min-height:2px;margin-bottom:8px"></div>
-
-    <!-- ВИБІР ФОНУ -->
-    <?php if ($has_rbg) : ?>
-    <div id="wqa_bg_wrap" style="background:#f8f9fa;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:none">
-        <div style="font-size:13px;font-weight:bold;margin-bottom:8px">🖼️ <?php echo wqa_t('Фон після видалення:', 'Background after removal:') ?></div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
-                <input type="radio" name="wqa_bg" value="original" checked> <?php echo wqa_t('Оригінал', 'Original') ?>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
-                <input type="radio" name="wqa_bg" value="transparent">
-                <span style="width:18px;height:18px;background:repeating-conic-gradient(#ccc 0% 25%,#fff 0% 50%) 0/8px 8px;border:1px solid #aaa;border-radius:3px;display:inline-block"></span>
-                <?php echo wqa_t('Прозорий', 'Transparent') ?>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
-                <input type="radio" name="wqa_bg" value="ffffff">
-                <span style="width:18px;height:18px;background:#fff;border:1px solid #aaa;border-radius:3px;display:inline-block"></span>
-                <?php echo wqa_t('Білий', 'White') ?>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
-                <input type="radio" name="wqa_bg" value="000000">
-                <span style="width:18px;height:18px;background:#000;border:1px solid #aaa;border-radius:3px;display:inline-block"></span>
-                <?php echo wqa_t('Чорний', 'Black') ?>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
-                <input type="radio" name="wqa_bg" value="cccccc">
-                <span style="width:18px;height:18px;background:#ccc;border:1px solid #aaa;border-radius:3px;display:inline-block"></span>
-                <?php echo wqa_t('Сірий', 'Gray') ?>
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px">
-                <input type="radio" name="wqa_bg" value="custom">
-                <?php echo wqa_t('Колір:', 'Color:') ?>
-                <input type="color" id="wqa_cc" value="#ff0000" style="width:32px;height:22px;padding:0;border:1px solid #ccc;margin-left:3px;cursor:pointer">
-            </label>
-        </div>
-        <div id="wqa_bg_st" style="margin-top:6px;font-size:12px;color:#555;display:none"></div>
+    <?php if (!$pro) : ?>
+    <div style="background:#fff3cd;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:14px">
+        📊 <?php echo wqa_t('Залишилось:', 'Left:') ?> <strong><?php echo wqa_left() ?></strong>/<?php echo wqa_limit() ?>
+        &nbsp; <a href="<?php echo esc_url( wqa_pro_url() ) ?>" target="_blank" style="color:#c00;font-weight:bold">💰 <?php echo wqa_t('Перейти на PRO (499 грн)', 'Go PRO (499 UAH)') ?> →</a>
     </div>
     <?php endif ?>
 
-    <!-- КНОПКИ ФОТО -->
+    <video id="wqa_cam" autoplay playsinline muted style="width:100%;background:#111;border-radius:10px;margin-bottom:6px;max-height:280px;object-fit:cover"></video>
+    <div id="wqa_gal" style="display:flex;gap:4px;flex-wrap:wrap;min-height:2px;margin-bottom:8px"></div>
+
+    <?php if ($has_rbg) : ?>
+    <div id="wqa_bg_wrap" style="background:#f8f9fa;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:none">
+        <div style="font-size:13px;font-weight:bold;margin-bottom:8px">🖼️ <?php echo wqa_t('Фон:', 'Background:') ?></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <label><input type="radio" name="wqa_bg" value="original" checked> <?php echo wqa_t('Оригінал', 'Original') ?></label>
+            <label><input type="radio" name="wqa_bg" value="transparent"> <?php echo wqa_t('Прозорий', 'Transparent') ?></label>
+            <label><input type="radio" name="wqa_bg" value="ffffff"> <?php echo wqa_t('Білий', 'White') ?></label>
+            <label><input type="radio" name="wqa_bg" value="000000"> <?php echo wqa_t('Чорний', 'Black') ?></label>
+            <label><input type="radio" name="wqa_bg" value="custom"> <?php echo wqa_t('Колір:', 'Color:') ?> <input type="color" id="wqa_cc" value="#ff0000" style="width:32px;height:22px;padding:0;border:1px solid #ccc;cursor:pointer"></label>
+        </div>
+    </div>
+    <?php endif ?>
+
     <div style="display:flex;gap:8px;margin-bottom:12px">
         <button id="btn_photo" style="flex:3;background:#2271b1;color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:bold;cursor:pointer">📷 <?php echo wqa_t('ФОТО', 'PHOTO') ?></button>
-        <button id="btn_clr"   style="flex:1;background:#6c757d;color:#fff;border:none;padding:12px;border-radius:8px;font-size:14px;cursor:pointer">❌</button>
+        <button id="btn_clr" style="flex:1;background:#6c757d;color:#fff;border:none;padding:12px;border-radius:8px;font-size:14px;cursor:pointer">❌</button>
     </div>
 
-    <!-- СТАТУС ГОЛОСУ -->
     <div id="wqa_bar" style="display:none;padding:12px 16px;border-radius:9px;font-size:15px;font-weight:bold;text-align:center;color:#fff;margin-bottom:8px"></div>
 
-    <!-- TEXTAREA -->
-    <label style="font-weight:bold;display:block;margin-bottom:5px">
-        📝 <?php echo wqa_t('ДАНІ ТОВАРУ — говоріть: маяк → значення', 'PRODUCT DATA — say: beacon → value') ?>
-    </label>
-    <textarea id="wqa_ta" rows="<?php echo count($fields) ?>"
-        style="width:100%;font-family:monospace;font-size:14px;padding:10px 12px;border:2px solid #2271b1;border-radius:10px;line-height:1.8;resize:vertical"><?php echo esc_textarea($template) ?></textarea>
+    <label style="font-weight:bold;display:block;margin-bottom:5px">📝 <?php echo wqa_t('ДАНІ ТОВАРУ', 'PRODUCT DATA') ?></label>
+    <textarea id="wqa_ta" rows="<?php echo count($fields) ?>" style="width:100%;font-family:monospace;font-size:14px;padding:10px 12px;border:2px solid #2271b1;border-radius:10px;line-height:1.8;resize:vertical"><?php echo esc_textarea($template) ?></textarea>
 
-    <!-- АТРИБУТИ -->
     <div style="margin-top:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
             <label style="font-weight:bold">🏷️ <?php echo wqa_t('АТРИБУТИ', 'ATTRIBUTES') ?></label>
             <button id="btn_add_attr" style="background:#6f42c1;color:#fff;border:none;padding:7px 13px;border-radius:6px;font-size:13px;cursor:pointer">+ <?php echo wqa_t('Додати', 'Add') ?></button>
         </div>
-        <p style="margin:0 0 6px;font-size:12px;color:#777"><?php echo wqa_t(
-            'Голос: «атрибут» → назва («колір») → «значення» → значення («червоний білий чорний»).',
-            'Voice: "attribute" → name ("color") → "value" → values ("red white black").'
-        ) ?></p>
+        <p style="margin:0 0 6px;font-size:12px;color:#777"><?php echo wqa_t('Голос: «атрибут» → назва («колір») → «значення» → значення («червоний білий чорний»).', 'Voice: "attribute" → name ("color") → "value" → values ("red white black").') ?></p>
         <div id="wqa_attrs"></div>
     </div>
 
-    <!-- КНОПКИ ДІЙ -->
     <div style="display:flex;gap:8px;margin-top:14px">
         <button id="btn_mic" style="flex:2;background:#1877F2;color:#fff;border:none;padding:14px;border-radius:10px;font-size:16px;font-weight:bold;cursor:pointer">🎤 <?php echo wqa_t('ДИКТУВАТИ', 'VOICE INPUT') ?></button>
     </div>
 
-    <!-- ВАРІАТИВНІ — тільки PRO -->
     <?php if ($pro) : ?>
     <div style="margin-top:12px;padding:14px;background:#f8f0ff;border-radius:10px;border:2px solid #6f42c1">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <label style="font-weight:bold"><?php echo wqa_t('Тип товару:', 'Product type:') ?></label>
+            <label style="font-weight:bold"><?php echo wqa_t('Тип:', 'Type:') ?></label>
             <select id="wqa_ptype" style="padding:7px 12px;border-radius:7px;border:2px solid #6f42c1;font-size:14px">
                 <option value="simple"><?php echo wqa_t('Простий', 'Simple') ?></option>
                 <option value="variable"><?php echo wqa_t('Варіативний', 'Variable') ?></option>
             </select>
         </div>
         <div id="wqa_vwrap" style="display:none">
-            <label style="font-weight:bold;display:block;margin-bottom:5px"><?php echo wqa_t('Варіації та ціни:', 'Variations and prices:') ?></label>
+            <label style="font-weight:bold;display:block;margin-bottom:5px"><?php echo wqa_t('Варіації:', 'Variations:') ?></label>
             <div id="wqa_var_rows"></div>
             <button id="btn_add_var" style="background:#6f42c1;color:#fff;border:none;padding:7px 13px;border-radius:6px;font-size:13px;cursor:pointer;margin-top:6px">+ <?php echo wqa_t('Додати варіацію', 'Add variation') ?></button>
         </div>
     </div>
     <?php endif ?>
 
-    <!-- ОПУБЛІКУВАТИ -->
     <button id="btn_save" style="width:100%;background:#00a32a;color:#fff;border:none;padding:16px;border-radius:10px;font-size:18px;font-weight:bold;cursor:pointer;margin-top:14px">
-        ➕ <?php echo wqa_t('ОПУБЛІКУВАТИ', 'PUBLISH') ?>
+        <?php echo $draft ? wqa_t('➕ ЗБЕРЕГТИ ЯК ЧЕРНЕТКУ', '➕ SAVE AS DRAFT') : wqa_t('➕ ОПУБЛІКУВАТИ', '➕ PUBLISH') ?>
     </button>
 
-    <!-- ПОВІДОМЛЕННЯ -->
     <div id="wqa_msg" style="display:none;margin-top:12px;padding:12px 14px;border-radius:8px;font-size:14px"></div>
 
-    <!-- ІНСТРУКЦІЯ -->
+    <?php
+    $instr = get_option('wqa_instructions', '');
+    if ( $instr ) {
+        echo '<div style="margin-top:18px;background:#f8f9fa;border-radius:10px;padding:12px 16px;font-size:13px;line-height:1.9">' . do_shortcode( wp_kses_post( $instr ) ) . '</div>';
+    } else {
+    ?>
     <details style="margin-top:18px;background:#f8f9fa;border-radius:10px;padding:12px 16px">
     <summary style="cursor:pointer;font-weight:bold;font-size:14px">📋 <?php echo wqa_t('Як диктувати', 'How to dictate') ?></summary>
     <div style="margin-top:10px;font-size:13px;line-height:1.9">
         <?php if (!$en) : ?>
-        <b>Правило:</b> 🎤 → маяк → пауза → значення. Або одразу: «назва штани».<br><br>
+        <b>Правило:</b> 🎤 → маяк → пауза → значення.<br><br>
         <table style="border-collapse:collapse;width:100%;font-size:12px">
         <tr style="background:#dee2e6"><th style="padding:4px 8px;text-align:left">Маяк</th><th style="padding:4px 8px;text-align:left">Приклад</th><th style="padding:4px 8px;text-align:left">Результат</th></tr>
         <?php foreach ([
             ['«назва»','«назва Штани»','НАЗВА: Штани'],
             ['«ціна»','«ціна 850»','ЦІНА: 850'],
-            ['«акція»','«акція 600»','АКЦІЯ: 600'],
             ['«бренд»','«бренд Nike»','БРЕНД: Nike'],
             ['«категорія»','«категорія Одяг»','КАТЕГОРІЯ: Одяг'],
-            ['«мітка»','«мітка новинка» → «мітка хіт»','МІТКИ: новинка, хіт'],
+            ['«мітка»','«мітка новинка»','МІТКИ: новинка'],
             ['«атрибут»','«атрибут» → «колір» → «значення» → «червоний білий»','Атрибут Колір: червоний, білий'],
-            ['«опис»','«опис Якісний матеріал»','ОПИС: ...'],
+            ['«варіація»','«варіація» → «розмір» → «S M L»','Варіація Розмір: S, M, L'],
         ] as $r) : ?>
         <tr style="border-bottom:1px solid #eee">
             <td style="padding:4px 8px;font-family:monospace"><?php echo $r[0] ?></td>
@@ -423,18 +420,14 @@ function wqa_page_main() {
         </tr>
         <?php endforeach ?>
         </table>
-        <?php else : ?>
-        <b>Rule:</b> 🎤 → beacon → pause → value. Or at once: «name jeans».<br>
-        Beacons: name, price, sale, brand, sku, weight, category, tags, description<br>
-        Attributes: «attribute» → name («color») → «value» → values («red white»)
         <?php endif ?>
     </div>
     </details>
+    <?php } ?>
     </div>
 
     <script>
     document.addEventListener('DOMContentLoaded', function () {
-
     var C = <?php echo json_encode($js_config, JSON_UNESCAPED_UNICODE) ?>;
 
     var photos = [], cam = null, listening = false;
@@ -482,23 +475,6 @@ function wqa_page_main() {
         if (!found) out.push(field + ': ' + value);
         ta.value = out.join('\n');
     }
-    function taFocus(field) {
-        var ta = document.getElementById('wqa_ta');
-        var pos = 0;
-        var lines = ta.value.split('\n');
-        for (var i = 0; i < lines.length; i++) {
-            var l = lines[i];
-            if (l.toLowerCase().indexOf(field.toLowerCase() + ':') === 0) {
-                var ac = pos + l.indexOf(':') + 2;
-                var le = pos + l.length;
-                ta.focus();
-                ta.setSelectionRange(ac, le);
-                ta.scrollTop = Math.max(0, i * 20 - 50);
-                return;
-            }
-            pos += l.length + 1;
-        }
-    }
 
     function attrUpsert(name, value) {
         var rows = document.querySelectorAll('.wqa_ar');
@@ -507,8 +483,6 @@ function wqa_page_main() {
             if (inputs[0].value.toLowerCase() === name.toLowerCase()) {
                 var cur = inputs[1].value.trim();
                 inputs[1].value = cur ? cur + ', ' + value : value;
-                inputs[1].style.borderColor = '#198754';
-                setTimeout(function () { inputs[1].style.borderColor = ''; }, 1400);
                 return;
             }
         }
@@ -604,19 +578,13 @@ function wqa_page_main() {
         };
     }
 
-    function startCam() {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            msg(C.L.cam_err + 'getUserMedia not supported', 'err'); return;
-        }
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-            .then(function (stream) { cam = stream; document.getElementById('wqa_cam').srcObject = stream; })
-            .catch(function (e) { msg(C.L.cam_err + e.message, 'err'); });
-    }
-    startCam();
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(function (stream) { cam = stream; document.getElementById('wqa_cam').srcObject = stream; })
+        .catch(function (e) { console.log(e); });
 
     document.getElementById('btn_photo').addEventListener('click', function () {
         var v = document.getElementById('wqa_cam');
-        if (!v.videoWidth) { msg(C.L.cam_on, 'err'); return; }
+        if (!v.videoWidth) return;
         var c = document.createElement('canvas');
         c.width = v.videoWidth; c.height = v.videoHeight;
         c.getContext('2d').drawImage(v, 0, 0);
@@ -629,7 +597,6 @@ function wqa_page_main() {
             return function () { photos.splice(idx, 1); img.remove(); };
         })(photos.length - 1));
         document.getElementById('wqa_gal').prepend(img);
-        msg(C.L.photo + photos.length, 'ok');
         var w = document.getElementById('wqa_bg_wrap');
         if (w) w.style.display = 'block';
     });
@@ -638,51 +605,13 @@ function wqa_page_main() {
         photos = []; document.getElementById('wqa_gal').innerHTML = '';
         var w = document.getElementById('wqa_bg_wrap');
         if (w) w.style.display = 'none';
-        msg(C.L.clr, 'info');
     });
-
-    function getBg() {
-        var radios = document.querySelectorAll('input[name="wqa_bg"]');
-        for (var i = 0; i < radios.length; i++) { if (radios[i].checked) return radios[i].value; }
-        return 'original';
-    }
-    function processPhotos(list, cb) {
-        if (!C.HAS_RBG || getBg() === 'original') { cb(list); return; }
-        var bg = getBg();
-        if (bg === 'custom') {
-            var cc = document.getElementById('wqa_cc');
-            bg = cc ? cc.value.replace('#', '') : 'ffffff';
-        }
-        var st = document.getElementById('wqa_bg_st');
-        if (st) st.style.display = 'block';
-        var res = [], i = 0;
-        function next() {
-            if (i >= list.length) { if (st) { st.textContent = C.L.bg_done; setTimeout(function () { st.style.display = 'none'; }, 2000); } cb(res); return; }
-            if (st) st.textContent = C.L.bg_proc + (i + 1) + C.L.bg_of + list.length + '…';
-            var fd = new FormData();
-            fd.append('action', 'wqa_remove_bg'); fd.append('nonce', C.NS);
-            fd.append('image', list[i]); fd.append('bg', bg);
-            fetch(C.AJAX, { method: 'POST', body: fd })
-                .then(function (r) { return r.json(); })
-                .then(function (d) {
-                    res.push(d.success && d.data && d.data.image ? d.data.image : list[i]);
-                    if (d.success && d.data && d.data.image) {
-                        var imgs = document.getElementById('wqa_gal').querySelectorAll('img');
-                        var idx = list.length - 1 - i;
-                        if (imgs[idx]) imgs[idx].src = d.data.image;
-                    }
-                    i++; next();
-                })
-                .catch(function () { res.push(list[i]); i++; next(); });
-        }
-        next();
-    }
 
     if (window.SpeechRecognition || window.webkitSpeechRecognition) {
         var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
         var rec = new SR();
         rec.lang = C.EN ? 'en-US' : 'uk-UA';
-        rec.continuous = true; rec.interimResults = false; rec.maxAlternatives = 3;
+        rec.continuous = true; rec.interimResults = false;
         var mb = document.getElementById('btn_mic');
 
         mb.addEventListener('click', function () {
@@ -710,14 +639,12 @@ function wqa_page_main() {
             for (var i = 0; i < res.length; i++) { spoken = res[i].transcript.trim(); if (spoken) break; }
             var low = spoken.toLowerCase().replace(/[.,!?;]$/g, '').trim();
 
-            // стан: чекаємо назву атрибуту
             if (vs === 's_attr_name') {
                 vattrName = spoken;
                 vs = 's_attr_val';
                 bar('🏷️ ' + spoken + ' → ' + C.L.attr_val, '#fd7e14');
                 return;
             }
-            // стан: чекаємо значення атрибуту
             if (vs === 's_attr_val' && vattrName) {
                 var vals = spoken.split(/[\s,]+/).filter(Boolean);
                 vals.forEach(function (v) { attrUpsert(vattrName, v); });
@@ -726,8 +653,7 @@ function wqa_page_main() {
                 setTimeout(barReady, 2200);
                 return;
             }
-
-            if (vs === 's_val' && vf) { taSet(vf, spoken); taFocus(vf); bar('✅ ' + vf + ': ' + spoken, '#198754'); vs = 'idle'; vf = null; setTimeout(barReady, 2200); return; }
+            if (vs === 's_val' && vf) { taSet(vf, spoken); bar('✅ ' + vf + ': ' + spoken, '#198754'); vs = 'idle'; vf = null; setTimeout(barReady, 2200); return; }
             if (vs === 's_tag' && vf) { spoken.split(/[\s,]+/).filter(Boolean).forEach(function (v) { taAppend(vf, v); }); bar('✅ ' + (C.EN ? 'Tags: ' : 'Мітки: ') + spoken, '#198754'); vs = 'idle'; vf = null; setTimeout(barReady, 2200); return; }
             if (vs === 's_vn') { va = spoken; vs = 's_vv'; bar('⏳ ' + spoken + C.L.val_prompt, '#fd7e14'); return; }
             if (vs === 's_vv' && va) {
@@ -747,15 +673,13 @@ function wqa_page_main() {
             if (!found) { bar(C.L.hint, '#6c757d'); setTimeout(barReady, 3500); return; }
 
             if (found.type === 'simple') {
-                if (inline) { taSet(found.field, inline); taFocus(found.field); bar('✅ ' + found.field + ': ' + inline, '#198754'); setTimeout(barReady, 2200); }
-                else { vf = found.field; vs = 's_val'; taFocus(found.field); bar('⏳ ' + found.field + C.L.val_prompt, '#fd7e14'); }
+                if (inline) { taSet(found.field, inline); bar('✅ ' + found.field + ': ' + inline, '#198754'); setTimeout(barReady, 2200); }
+                else { vf = found.field; vs = 's_val'; bar('⏳ ' + found.field + C.L.val_prompt, '#fd7e14'); }
             } else if (found.type === 'append') {
                 if (inline) { inline.split(/[\s,]+/).filter(Boolean).forEach(function (v) { taAppend(found.field, v); }); bar('✅ ' + (C.EN ? 'Tags: ' : 'Мітки: ') + inline, '#198754'); setTimeout(barReady, 2200); }
                 else { vf = found.field; vs = 's_tag'; bar(C.L.tag_prompt, '#fd7e14'); }
             } else if (found.type === 'attr') {
-                // нова логіка: атрибут → назва → значення → значення
                 if (inline) {
-                    // якщо сказали «атрибут колір» — переходимо до очікування слова "значення"
                     vattrName = inline;
                     vs = 's_attr_val';
                     bar('🏷️ ' + inline + ' → ' + C.L.attr_val, '#fd7e14');
@@ -779,7 +703,6 @@ function wqa_page_main() {
         rec.onerror = function (e) {
             if (e.error === 'no-speech') return;
             if (e.error === 'not-allowed') { bar(C.L.mic_blocked, '#dc3545'); stopVoice(); return; }
-            msg(C.L.mic_err + e.error, 'err');
         };
         rec.onend = function () { if (listening) setTimeout(function () { try { rec.start(); } catch (x) {} }, 120); };
     } else {
@@ -808,57 +731,48 @@ function wqa_page_main() {
 
         self.disabled = true; self.textContent = C.L.saving;
 
-        function doSave(finalPhotos) {
-            var fd = new FormData();
-            fd.append('action', 'wqa_save'); fd.append('nonce', C.NS);
-            fd.append('text', document.getElementById('wqa_ta').value);
-            fd.append('images', JSON.stringify(finalPhotos));
-            fd.append('attrs', JSON.stringify(attrs));
-            fd.append('type', ptype);
-            fd.append('variations', JSON.stringify(variations));
+        var fd = new FormData();
+        fd.append('action', 'wqa_save'); fd.append('nonce', C.NS);
+        fd.append('text', document.getElementById('wqa_ta').value);
+        fd.append('images', JSON.stringify(photos));
+        fd.append('attrs', JSON.stringify(attrs));
+        fd.append('type', ptype);
+        fd.append('variations', JSON.stringify(variations));
 
-            fetch(C.AJAX, { method: 'POST', body: fd })
-                .then(function (r) { return r.json(); })
-                .then(function (d) {
-                    if (d.success) {
-                        msg(C.L.saved + d.data.id, 'ok');
-                        photos = []; document.getElementById('wqa_gal').innerHTML = '';
-                        document.getElementById('wqa_attrs').innerHTML = '';
-                        document.getElementById('wqa_ta').value = C.TPL;
-                        var w = document.getElementById('wqa_bg_wrap'); if (w) w.style.display = 'none';
-                        var vr = document.getElementById('wqa_var_rows'); if (vr) vr.innerHTML = '';
-                        self.style.background = '#e67e00'; self.textContent = C.L.add_next;
-                        setTimeout(function () { location.reload(); }, 1800);
-                    } else {
-                        msg('❌ ' + ((d.data && d.data.message) ? d.data.message : (d.data || 'Error')), 'err');
-                        self.disabled = false; self.textContent = C.L.publish;
-                    }
-                })
-                .catch(function () { msg(C.L.conn_err, 'err'); self.disabled = false; self.textContent = C.L.publish; });
-        }
-
-        if (C.HAS_RBG && getBg() !== 'original' && photos.length > 0) {
-            processPhotos(photos.slice(), doSave);
-        } else {
-            doSave(photos.slice());
-        }
-    });
-
-    document.getElementById('btn_export').addEventListener('click', function () {
-        var self = this;
-        self.textContent = '⏳'; self.disabled = true;
-        var fd = new FormData(); fd.append('action', 'wqa_export'); fd.append('nonce', C.NE);
         fetch(C.AJAX, { method: 'POST', body: fd })
-            .then(function (r) { return r.blob(); })
-            .then(function (b) {
-                var u = URL.createObjectURL(b);
-                var a = document.createElement('a'); a.href = u;
-                a.download = 'wc-products-' + new Date().toISOString().split('T')[0] + '.csv';
-                document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
-            })
-            .catch(function () { msg('❌ Export error', 'err'); });
-        self.textContent = '📤 CSV'; self.disabled = false;
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.success) {
+                    msg(C.L.saved + d.data.id, 'ok');
+                    photos = []; document.getElementById('wqa_gal').innerHTML = '';
+                    document.getElementById('wqa_attrs').innerHTML = '';
+                    document.getElementById('wqa_ta').value = C.TPL;
+                    var vr = document.getElementById('wqa_var_rows'); if (vr) vr.innerHTML = '';
+                    self.disabled = false; self.textContent = C.DRAFT ? C.L.draft : C.L.publish;
+                } else {
+                    msg('❌ ' + (d.data || 'Error'), 'err');
+                    self.disabled = false; self.textContent = C.DRAFT ? C.L.draft : C.L.publish;
+                }
+            });
     });
+
+    var btnExport = document.getElementById('btn_export');
+    if (btnExport) {
+        btnExport.addEventListener('click', function () {
+            var self = this;
+            self.textContent = '⏳'; self.disabled = true;
+            var fd = new FormData(); fd.append('action', 'wqa_export'); fd.append('nonce', C.NE);
+            fetch(C.AJAX, { method: 'POST', body: fd })
+                .then(function (r) { return r.blob(); })
+                .then(function (b) {
+                    var u = URL.createObjectURL(b);
+                    var a = document.createElement('a'); a.href = u;
+                    a.download = 'wc-products-' + new Date().toISOString().split('T')[0] + '.csv';
+                    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
+                });
+            self.textContent = '📤 CSV'; self.disabled = false;
+        });
+    }
 
     });
     </script>
@@ -871,13 +785,14 @@ function wqa_page_main() {
 add_action('wp_ajax_wqa_save', function () {
     if (!check_ajax_referer('wqa_save', 'nonce', false)) wp_send_json_error('Nonce');
     if (!current_user_can('manage_woocommerce') && !current_user_can('edit_products')) wp_send_json_error('Permission');
-    if (!wqa_can()) wp_send_json_error(['message' => wqa_t('Ліміт вичерпано', 'Limit exceeded')]);
+    if (!wqa_can()) wp_send_json_error('Ліміт вичерпано');
 
     $raw   = sanitize_textarea_field($_POST['text']       ?? '');
     $imgs  = json_decode(stripslashes($_POST['images']    ?? '[]'), true) ?: [];
     $attrs = json_decode(stripslashes($_POST['attrs']     ?? '[]'), true) ?: [];
     $ptype = sanitize_text_field($_POST['type']           ?? 'simple');
     $vars  = json_decode(stripslashes($_POST['variations'] ?? '[]'), true) ?: [];
+    $draft = get_option('wqa_draft', '1') === '1';
 
     $data = [];
     foreach (explode("\n", $raw) as $l) {
@@ -889,30 +804,24 @@ add_action('wp_ajax_wqa_save', function () {
     $name  = $data['NAME']        ?? $data['НАЗВА']     ?? '';
     $price = preg_replace('/[^0-9.]/', '', $data['PRICE'] ?? $data['ЦІНА']  ?? '');
     $sale  = preg_replace('/[^0-9.]/', '', $data['SALE']  ?? $data['АКЦІЯ'] ?? '');
-    $sku   = $data['SKU']         ?? $data['АРТИКУЛ']   ?? '';
     $desc  = $data['DESCRIPTION'] ?? $data['ОПИС']      ?? '';
     $cat   = $data['CATEGORY']    ?? $data['КАТЕГОРІЯ'] ?? '';
     $brand = $data['BRAND']       ?? $data['БРЕНД']     ?? '';
     $tags  = $data['TAGS']        ?? $data['МІТКИ']     ?? '';
-    $wt    = preg_replace('/[^0-9.]/', '', $data['WEIGHT'] ?? $data['ВАГА'] ?? '');
 
     $product = ($ptype === 'variable' && wqa_pro()) ? new WC_Product_Variable() : new WC_Product_Simple();
-    $product->set_status('publish');
+    $product->set_status($draft ? 'draft' : 'publish');
     $product->set_name($name ?: wqa_t('Товар', 'Product').' '.date('H:i:s'));
     if ($price) $product->set_regular_price($price);
     if ($sale)  $product->set_sale_price($sale);
-    if ($sku)   try { $product->set_sku($sku); } catch (Exception $e) {}
     if ($desc)  $product->set_description($desc);
-    if ($wt)    $product->set_weight($wt);
     $pid = $product->save();
-    if (!$pid) wp_send_json_error(['message' => 'Could not save']);
+    if (!$pid) wp_send_json_error('Could not save');
 
-    // Категорія
     if ($cat) {
         $t = term_exists($cat, 'product_cat') ?: wp_insert_term($cat, 'product_cat');
         if (!is_wp_error($t)) wp_set_object_terms($pid, (int)$t['term_id'], 'product_cat');
     }
-    // Бренд (різні таксономії)
     if ($brand) {
         foreach (['pwb-brand','product_brand','pa_brand'] as $tax) {
             if (taxonomy_exists($tax)) {
@@ -921,7 +830,6 @@ add_action('wp_ajax_wqa_save', function () {
             }
         }
     }
-    // Мітки
     if ($tags) {
         $ids = [];
         foreach (array_filter(array_map('trim', explode(',', $tags))) as $tn) {
@@ -931,133 +839,43 @@ add_action('wp_ajax_wqa_save', function () {
         if ($ids) wp_set_object_terms($pid, $ids, 'product_tag');
     }
 
-    // Атрибути — створюємо глобальні, якщо немає
     $wca = [];
     foreach ($attrs as $a) {
         if (empty($a['name']) || empty($a['value'])) continue;
         $attr_name = wc_clean($a['name']);
-        $taxonomy  = wc_attribute_taxonomy_name($attr_name); // pa_kolir
-
+        $taxonomy  = wc_attribute_taxonomy_name($attr_name);
         if (!taxonomy_exists($taxonomy)) {
-            $attr_id = wc_create_attribute([
-                'name'     => $attr_name,
-                'slug'     => sanitize_title($attr_name),
-                'type'     => 'select',
-                'order_by' => 'menu_order',
-            ]);
-            if (!is_wp_error($attr_id)) {
-                delete_transient('wc_attribute_taxonomies');
-                register_taxonomy($taxonomy, ['product'], []);
-            }
+            $attr_id = wc_create_attribute(['name' => $attr_name, 'slug' => sanitize_title($attr_name), 'type' => 'select', 'order_by' => 'menu_order']);
+            if (!is_wp_error($attr_id)) { delete_transient('wc_attribute_taxonomies'); register_taxonomy($taxonomy, ['product'], []); }
         }
-
         $values = array_filter(array_map('trim', explode(',', $a['value'])));
-
-        // Створюємо терми для кожного значення
-        foreach ($values as $val) {
-            if (!term_exists($val, $taxonomy)) {
-                wp_insert_term($val, $taxonomy);
-            }
-        }
-
+        foreach ($values as $val) { if (!term_exists($val, $taxonomy)) wp_insert_term($val, $taxonomy); }
         $attr = new WC_Product_Attribute();
         $attr->set_id(wc_attribute_taxonomy_id_by_name($attr_name));
         $attr->set_name($taxonomy);
         $attr->set_options($values);
         $attr->set_visible(true);
-        $attr->set_variation(false);
         $wca[] = $attr;
     }
 
-    // Варіативні
-    if ($ptype === 'variable' && wqa_pro() && !empty($vars)) {
-        $varmap = []; $price_map = [];
-        foreach ($vars as $var) {
-            $vn = $var['name'] ?? ''; $vvals = $var['values'] ?? []; $vprices = $var['prices'] ?? [];
-            if (!$vn || empty($vvals)) continue;
-            $attr_name = wc_clean($vn);
-            $taxonomy  = wc_attribute_taxonomy_name($attr_name);
-            if (!taxonomy_exists($taxonomy)) {
-                $attr_id = wc_create_attribute(['name' => $attr_name, 'slug' => sanitize_title($attr_name), 'type' => 'select', 'order_by' => 'menu_order']);
-                if (!is_wp_error($attr_id)) { delete_transient('wc_attribute_taxonomies'); register_taxonomy($taxonomy, ['product'], []); }
-            }
-            foreach ($vvals as $val) { if (!term_exists(trim($val), $taxonomy)) wp_insert_term(trim($val), $taxonomy); }
-            $va = new WC_Product_Attribute();
-            $va->set_id(wc_attribute_taxonomy_id_by_name($attr_name));
-            $va->set_name($taxonomy);
-            $va->set_options(array_filter(array_map('trim', $vvals)));
-            $va->set_visible(true);
-            $va->set_variation(true);
-            $wca[] = $va;
-            $varmap[$vn] = array_values(array_filter(array_map('trim', $vvals)));
-            foreach ($vvals as $i => $vv) {
-                $vv = trim($vv); $p = trim($vprices[$i] ?? '');
-                if ($vv && $p) $price_map[$vn.'|'.$vv] = $p;
-            }
-        }
-        if ($wca) { $product->set_attributes($wca); $product->save(); }
-        $combos = [[]];
-        foreach ($varmap as $vn => $opts) {
-            $new = [];
-            foreach ($combos as $c) foreach ($opts as $o) $new[] = array_merge($c, [$vn => $o]);
-            $combos = $new;
-        }
-        foreach ($combos as $combo) {
-            $v = new WC_Product_Variation();
-            $v->set_parent_id($pid); $v->set_status('publish');
-            $v_price = $price;
-            foreach ($combo as $cn => $cv) { if (isset($price_map[$cn.'|'.$cv])) { $v_price = $price_map[$cn.'|'.$cv]; break; } }
-            if ($v_price) $v->set_regular_price($v_price);
-            $va2 = [];
-            foreach ($combo as $n => $val) $va2[wc_attribute_taxonomy_name($n)] = $val;
-            $v->set_attributes($va2); $v->save();
-        }
-    } else {
-        if ($wca) { $product->set_attributes($wca); $product->save(); }
-    }
+    if ($wca) { $product->set_attributes($wca); $product->save(); }
 
-    // Фото
-    $gallery = [];
     require_once ABSPATH.'wp-admin/includes/image.php';
     foreach ($imgs as $i => $b64) {
-        $is_png = strpos($b64, 'data:image/png') !== false;
-        $img    = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $b64));
-        $ext    = $is_png ? 'png' : 'jpg'; $mime = $is_png ? 'image/png' : 'image/jpeg';
-        $file   = wp_upload_bits('wqa_'.$pid.'_'.time().'_'.$i.'.'.$ext, null, $img);
+        $img = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $b64));
+        $file = wp_upload_bits('wqa_'.$pid.'_'.time().'_'.$i.'.jpg', null, $img);
         if ($file['error']) continue;
-        $aid = wp_insert_attachment(['post_mime_type' => $mime, 'post_status' => 'inherit'], $file['file'], $pid);
+        $aid = wp_insert_attachment(['post_mime_type' => 'image/jpeg', 'post_status' => 'inherit'], $file['file'], $pid);
         wp_update_attachment_metadata($aid, wp_generate_attachment_metadata($aid, $file['file']));
-        if ($i === 0) set_post_thumbnail($pid, $aid); else $gallery[] = $aid;
+        if ($i === 0) set_post_thumbnail($pid, $aid);
     }
-    if ($gallery) update_post_meta($pid, '_product_image_gallery', implode(',', $gallery));
 
     wqa_inc();
     wp_send_json_success(['id' => $pid]);
 });
 
 // =====================================================================
-// AJAX: REMOVE.BG
-// =====================================================================
-add_action('wp_ajax_wqa_remove_bg', function () {
-    if (!check_ajax_referer('wqa_save', 'nonce', false)) wp_send_json_error('Nonce');
-    $api = get_option('wqa_rbg_api', '');
-    if (!$api) wp_send_json_error('No API key');
-    $b64 = $_POST['image'] ?? ''; $bg = sanitize_text_field($_POST['bg'] ?? 'transparent');
-    if (!$b64) wp_send_json_error('No image');
-    $img_data = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', str_replace(' ', '+', $b64)));
-    $r = wp_remote_post('https://api.remove.bg/v1.0/removebg', [
-        'headers' => ['X-Api-Key' => $api],
-        'body'    => ['image_file_b64' => base64_encode($img_data), 'size' => 'auto', 'format' => 'png', 'bg_color' => ($bg === 'transparent' ? '' : $bg)],
-        'timeout' => 30,
-    ]);
-    if (is_wp_error($r)) wp_send_json_error($r->get_error_message());
-    $code = wp_remote_retrieve_response_code($r);
-    if ($code !== 200) { $b = json_decode(wp_remote_retrieve_body($r), true); wp_send_json_error($b['errors'][0]['title'] ?? 'HTTP '.$code); }
-    wp_send_json_success(['image' => 'data:image/png;base64,'.base64_encode(wp_remote_retrieve_body($r))]);
-});
-
-// =====================================================================
-// AJAX: ЕКСПОРТ CSV (розширений)
+// AJAX: ЕКСПОРТ CSV (СУМІСНИЙ З WOOCOMMERCE)
 // =====================================================================
 add_action('wp_ajax_wqa_export', function () {
     if (!check_ajax_referer('wqa_export', 'nonce', false)) wp_die('Nonce');
@@ -1066,49 +884,38 @@ add_action('wp_ajax_wqa_export', function () {
     $products = wc_get_products(['limit' => -1, 'status' => 'any', 'return' => 'objects']);
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="wc-products-'.date('Y-m-d').'.csv"');
-    header('Cache-Control: no-cache,no-store,must-revalidate');
-
+    header('Content-Disposition: attachment; filename="wc-import-'.date('Y-m-d').'.csv"');
+    
     $out = fopen('php://output', 'w');
-    fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));
+    fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM для Excel
 
+    // Стандартні заголовки WooCommerce
     $headers = [
-        'ID','Type','SKU','Name','Published','Is featured?','Visibility in catalog',
-        'Short description','Description','Date sale price starts','Date sale price ends',
-        'Tax status','Tax class','In stock?','Stock','Low stock amount','Backorders allowed?',
-        'Sold individually?','Weight (kg)','Length (cm)','Width (cm)','Height (cm)',
-        'Allow customer reviews?','Purchase note','Sale price','Regular price',
-        'Categories','Tags','Brands','Shipping class','Images','Download limit','Download expiry',
-        'Parent','Grouped products','Upsells','Cross-sells','External URL','Button text','Position',
-        'Attribute 1 name','Attribute 1 value(s)','Attribute 1 visible','Attribute 1 global',
-        'Attribute 2 name','Attribute 2 value(s)','Attribute 2 visible','Attribute 2 global',
-        'Attribute 3 name','Attribute 3 value(s)','Attribute 3 visible','Attribute 3 global',
-        'Attribute 4 name','Attribute 4 value(s)','Attribute 4 visible','Attribute 4 global',
-        'Attribute 5 name','Attribute 5 value(s)','Attribute 5 visible','Attribute 5 global',
+        'ID', 'Type', 'SKU', 'Name', 'Published', 'Is featured?', 'Visibility in catalog',
+        'Short description', 'Description', 'Date sale price starts', 'Date sale price ends',
+        'Tax status', 'Tax class', 'In stock?', 'Stock', 'Low stock amount', 'Backorders allowed?',
+        'Sold individually?', 'Weight (kg)', 'Length (cm)', 'Width (cm)', 'Height (cm)',
+        'Allow customer reviews?', 'Purchase note', 'Sale price', 'Regular price',
+        'Categories', 'Tags', 'Shipping class', 'Images', 'Download limit', 'Download expiry',
+        'Parent', 'Grouped products', 'Upsells', 'Cross-sells', 'External URL', 'Button text', 'Position',
+        'Attribute 1 name', 'Attribute 1 value(s)', 'Attribute 1 visible', 'Attribute 1 global',
+        'Attribute 2 name', 'Attribute 2 value(s)', 'Attribute 2 visible', 'Attribute 2 global',
+        'Attribute 3 name', 'Attribute 3 value(s)', 'Attribute 3 visible', 'Attribute 3 global'
     ];
     fputcsv($out, $headers);
 
     foreach ($products as $p) {
         $pid = $p->get_id();
-
         $cats = implode(', ', wp_get_object_terms($pid, 'product_cat', ['fields' => 'names']));
         $tgs  = implode(', ', wp_get_object_terms($pid, 'product_tag', ['fields' => 'names']));
-
-        $brands = '';
-        foreach (['pwb-brand','product_brand','pa_brand'] as $btax) {
-            if (taxonomy_exists($btax)) {
-                $terms = wp_get_object_terms($pid, $btax, ['fields' => 'names']);
-                if (!is_wp_error($terms) && $terms) { $brands = implode(', ', $terms); break; }
-            }
-        }
-
+        
         $imgs = [];
         if ($p->get_image_id()) $imgs[] = wp_get_attachment_url($p->get_image_id());
         foreach ($p->get_gallery_image_ids() as $gi) if ($gi) $imgs[] = wp_get_attachment_url($gi);
 
         $as = array_values($p->get_attributes());
         $attr_cols = [];
-        for ($i = 0; $i < 5; $i++) {
+        for ($i = 0; $i < 3; $i++) {
             if (isset($as[$i])) {
                 $attr_cols[] = $as[$i]->get_name();
                 $attr_cols[] = implode(', ', $as[$i]->get_options());
@@ -1120,46 +927,15 @@ add_action('wp_ajax_wqa_export', function () {
         }
 
         $row = [
-            $pid,
-            $p->get_type(),
-            $p->get_sku(),
-            $p->get_name(),
-            $p->get_status() === 'publish' ? 1 : 0,
-            $p->is_featured() ? 1 : 0,
-            'visible',
-            $p->get_short_description(),
-            $p->get_description(),
-            '',
-            '',
-            $p->get_tax_status(),
-            $p->get_tax_class(),
-            $p->is_in_stock() ? 1 : 0,
-            $p->get_stock_quantity() ?? '',
-            $p->get_low_stock_amount() ?? '',
-            $p->get_backorders(),
-            $p->get_sold_individually() ? 1 : 0,
-            $p->get_weight(),
-            $p->get_length(),
-            $p->get_width(),
-            $p->get_height(),
-            $p->get_reviews_allowed() ? 1 : 0,
-            $p->get_purchase_note(),
-            $p->get_sale_price(),
-            $p->get_regular_price(),
-            $cats,
-            $tgs,
-            $brands,
-            $p->get_shipping_class(),
-            implode(', ', $imgs),
-            $p->get_download_limit(),
-            $p->get_download_expiry(),
-            $p->get_parent_id(),
-            '',
-            implode(', ', $p->get_upsell_ids()),
-            implode(', ', $p->get_cross_sell_ids()),
-            $p->get_product_url(),
-            $p->get_button_text(),
-            '',
+            $pid, $p->get_type(), $p->get_sku(), $p->get_name(), $p->get_status() === 'publish' ? 1 : 0,
+            $p->is_featured() ? 1 : 0, 'visible', $p->get_short_description(), $p->get_description(),
+            '', '', $p->get_tax_status(), $p->get_tax_class(), $p->is_in_stock() ? 1 : 0,
+            $p->get_stock_quantity() ?? '', $p->get_low_stock_amount() ?? '', $p->get_backorders(),
+            $p->get_sold_individually() ? 1 : 0, $p->get_weight(), $p->get_length(), $p->get_width(), $p->get_height(),
+            $p->get_reviews_allowed() ? 1 : 0, $p->get_purchase_note(), $p->get_sale_price(), $p->get_regular_price(),
+            $cats, $tgs, $p->get_shipping_class(), implode(', ', $imgs), $p->get_download_limit(), $p->get_download_expiry(),
+            $p->get_parent_id(), '', implode(', ', $p->get_upsell_ids()), implode(', ', $p->get_cross_sell_ids()),
+            $p->get_product_url(), $p->get_button_text(), '',
         ];
         $row = array_merge($row, $attr_cols);
         fputcsv($out, $row);
@@ -1167,5 +943,3 @@ add_action('wp_ajax_wqa_export', function () {
     fclose($out);
     exit;
 });
-
-register_deactivation_hook(__FILE__, '__return_false');
